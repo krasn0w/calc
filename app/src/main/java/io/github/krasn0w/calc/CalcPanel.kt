@@ -51,7 +51,7 @@ class CalcPanel(context: Context, val floating: Boolean, private val host: Host)
     private val padSide = dp(if (floating) 10f else 16f)
     private val padTop = dp(if (floating) 2f else 4f)
     private val padBottom = dp(if (floating) 12f else 16f)
-    private val barH = dp(if (floating) 36f else 52f)
+    private var barH = dp(if (floating) 36f else 52f)
     private val displayMin = dp(if (floating) 56f else 96f)
     val windowRadius = dp(26f).toFloat()
 
@@ -80,6 +80,7 @@ class CalcPanel(context: Context, val floating: Boolean, private val host: Host)
         thumbTintList = ColorStateList.valueOf(Color.WHITE)
         progressBackgroundTintList = ColorStateList.valueOf(0xFF5A5A60.toInt())
         contentDescription = "seek"
+        setPadding(dp(10f), 0, dp(10f), 0)
         setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
                 if (fromUser) host.onAlphaChanged(p)
@@ -147,7 +148,6 @@ class CalcPanel(context: Context, val floating: Boolean, private val host: Host)
 
         modeBtn.setOnClickListener { log("key mode"); host.onModeToggle() }
         closeBtn.setOnClickListener { log("key close"); host.onClose() }
-        corner?.setOnTouchListener { _, e -> forward(e) { dx, dy, ph -> host.onResize(dx, dy, ph) }; true }
 
         refresh()
     }
@@ -260,9 +260,19 @@ class CalcPanel(context: Context, val floating: Boolean, private val host: Host)
         }
     }
 
+    private var resizing = false
+
+    /**
+     * Floating window: a touch that no key took moves the window, or resizes it
+     * when it starts in the bottom-right corner zone (around the arc).
+     */
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (!floating) return super.onTouchEvent(e)
-        forward(e) { dx, dy, ph -> host.onDrag(dx, dy, ph) }
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            val zone = dp(52f)
+            resizing = e.x > width - zone && e.y > height - zone
+        }
+        forward(e) { dx, dy, ph -> if (resizing) host.onResize(dx, dy, ph) else host.onDrag(dx, dy, ph) }
         return true
     }
 
@@ -305,6 +315,8 @@ class CalcPanel(context: Context, val floating: Boolean, private val host: Host)
         val top = paddingTop + padTop
         val bottom = h - paddingBottom - padBottom
         val availW = max(0, right - left)
+        // The floating title bar scales with the window, within comfortable touch limits.
+        if (floating) barH = ((availW / 4) * 0.62f).roundToInt().coerceIn(dp(30f), dp(40f))
         val rows = 5f + 2f * fraction
         val availH = (bottom - top - barH - displayMin).toFloat()
 
@@ -357,8 +369,16 @@ class CalcPanel(context: Context, val floating: Boolean, private val host: Host)
         // Title bar, aligned with the key circles.
         place(closeBtn, dRight - barH + inset, top, barH, barH)
         place(modeBtn, dRight - 2 * barH + inset, top, barH, barH)
-        opacityIcon?.let { place(it, dLeft - inset, top, barH, barH) }
-        seek?.let { place(it, dLeft - inset + barH, top, max(0, dRight - 2 * barH + inset - (dLeft - inset + barH) - dp(4f)), barH) }
+        val barLeft = dLeft - inset
+        val modeLeft = dRight - 2 * barH + inset
+        var seekLeft = barLeft + barH
+        if (opacityIcon != null) {
+            if (modeLeft - dp(4f) - seekLeft < dp(72f)) {
+                place(opacityIcon, barLeft, top, 0, 0)   // narrow window: the slider gets the room
+                seekLeft = barLeft
+            } else place(opacityIcon, barLeft, top, barH, barH)
+        }
+        seek?.let { place(it, seekLeft, top, max(0, modeLeft - dp(4f) - seekLeft), barH) }
         corner?.let { val s = dp(40f); place(it, w - s, h - s, s, s) }
     }
 

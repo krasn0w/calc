@@ -101,23 +101,30 @@ shot("05-float")
 # Resize by the corner: bigger, then check the layout holds
 p = positions("F")
 l, t, r, b = p["corner"]
-cx, cy = (l + r) // 2, (t + b) // 2
+cx, cy = r - 14, b - 14
 sh(f"adb shell input swipe {cx} {cy} {cx + 120} {cy + 260} 900")
 time.sleep(2)
 shot("06-resized-bigger")
 
 p = positions("F")
 l, t, r, b = p["corner"]
-cx, cy = (l + r) // 2, (t + b) // 2
+cx, cy = r - 14, b - 14
 sh(f"adb shell input swipe {cx} {cy} {cx - 300} {cy - 420} 900")
 time.sleep(2)
 shot("07-resized-smaller")
 
 # Close the panel in the floating window, then type
 tap("F", "more", settle=1.5)
+l, t, r, b = positions("F")["clear"]
+sh(f"adb shell input swipe {(l + r) // 2} {(t + b) // 2} {(l + r) // 2} {(t + b) // 2} 900")  # long press: clear all
+time.sleep(0.8)
 for k in ["7", "×", "8", "="]:
     tap("F", k)
 shot("08-float-typing")
+# "=" sits next to the resize zone: it must still compute, not resize
+for k in ["="]:
+    tap("F", k)
+shot("08b-float-repeat")
 
 # Opacity ~30%
 l, t, r, b = positions("F")["seek"]

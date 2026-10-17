@@ -58,6 +58,18 @@ class KeyView(context: Context, val keyId: String, label: String, val kind: Kind
         contentDescription = keyId
     }
 
+    /** Only the circle itself is the key; touches outside it fall through to the window (drag/resize). */
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+        if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+            val r = min(width, height) / 2f
+            val dx = e.x - width / 2f
+            val dy = e.y - height / 2f
+            if (dx * dx + dy * dy > r * r) return false
+        }
+        return super.onTouchEvent(e)
+    }
+
     override fun onDraw(c: Canvas) {
         val size = min(width, height).toFloat()
         if (size <= 0f) return
