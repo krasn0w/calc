@@ -1,7 +1,10 @@
-"""Emulator smoke test: install, grant overlay, launch, press keys, take screenshots, fail on crash."""
+"""Emulator smoke test.
+
+The app logs every control's on-screen bounds ("pos <A|F> <id> l t r b") after each layout,
+so taps follow the real layout in both modes: A = full-screen app, F = floating window.
+"""
 import glob
 import os
-import re
 import subprocess
 import sys
 import time
@@ -10,13 +13,14 @@ PKG = "io.github.krasn0w.calc"
 os.makedirs("shots", exist_ok=True)
 
 
-def sh(cmd, check=True):
-    print("+", cmd, flush=True)
+def sh(cmd, check=True, quiet=False):
+    if not quiet:
+        print("+", cmd, flush=True)
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if r.stdout.strip():
-        print(r.stdout[-3000:], flush=True)
+    if not quiet and r.stdout.strip():
+        print(r.stdout[-2000:], flush=True)
     if r.stderr.strip():
-        print(r.stderr[-3000:], flush=True)
+        print(r.stderr[-2000:], flush=True)
     if check and r.returncode != 0:
         sys.exit(f"command failed: {cmd}")
     return r.stdout
@@ -29,98 +33,106 @@ def shot(name):
     print(f"shot {name}: {len(png)} bytes", flush=True)
 
 
+def positions(mode):
+    pos = {}
+    for line in sh("adb logcat -d -s Calc:D", quiet=True).splitlines():
+        i = line.find("pos ")
+        if i < 0:
+            continue
+        parts = line[i:].split()
+        if len(parts) == 7 and parts[1] == mode:
+            pos[parts[2]] = tuple(int(x) for x in parts[3:7])
+    return pos
+
+
+def wait_for(mode, key, timeout=30):
+    for _ in range(timeout * 2):
+        p = positions(mode)
+        if key in p:
+            return p
+        time.sleep(0.5)
+    sys.exit(f"no layout for {mode}/{key}")
+
+
+def tap(mode, key, settle=0.8):
+    p = positions(mode)
+    if key not in p:
+        sys.exit(f"unknown key {mode}/{key}; have {sorted(p)}")
+    l, t, r, b = p[key]
+    sh(f"adb shell input tap {(l + r) // 2} {(t + b) // 2}")
+    time.sleep(settle)
+
+
 apk = glob.glob("calc*.apk")[0]
 sh(f"adb install -r {apk}")
 sh(f"adb shell appops set {PKG} SYSTEM_ALERT_WINDOW allow")
 sh("adb logcat -c", check=False)
-sh("adb shell input keyevent KEYCODE_HOME")
-time.sleep(2)
 sh(f"adb shell am start -n {PKG}/.MainActivity")
-for _ in range(30):
-    if "APPLICATION_OVERLAY" in sh("adb shell dumpsys window windows | grep -A6 'u0 " + PKG + "' || true", check=False):
-        break
-    time.sleep(1)
+wait_for("A", "=")
 time.sleep(2)
-shot("1-launch")
+shot("01-full")
 
-# Density and the overlay window's frame.
-dens_out = sh("adb shell wm density")
-dens = int(re.search(r"Physical density:\s*(\d+)", dens_out).group(1))
-over = re.search(r"Override density:\s*(\d+)", dens_out)
-if over:
-    dens = int(over.group(1))
-d = dens / 160.0
+# Percent: -30 + 50% = -45 (standard calculator semantics)
+for k in ["3", "0", "±", "+", "5", "0", "%", "="]:
+    tap("A", k)
+shot("02-percent")
 
+# Repeated "=": 2 + 3 = = = -> 11
+tap("A", "clear")
+for k in ["2", "+", "3", "=", "=", "="]:
+    tap("A", k)
+shot("03-repeat")
 
-def dp(v):
-    return int(v * d + 0.5)
-
-
-dump = sh("adb shell dumpsys window windows")
-frame = None
-for block in dump.split("Window #"):
-    if PKG in block and "APPLICATION_OVERLAY" in block:
-        with open("shots/window.txt", "w") as f:
-            f.write(block)
-        m = re.search(r"(?<![A-Za-z])(?:frame|mFrame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", block)
-        if m:
-            frame = tuple(int(x) for x in m.groups())
-        break
-if not frame:
-    sys.exit("overlay window not found in dumpsys")
-fx, fy, fr, fb = frame
-print("overlay frame", frame, "density", dens, flush=True)
-
-KEY, GAP, PAD = dp(52), dp(8), dp(12)
-INNER = KEY * 4 + GAP * 3
-TOP = fy + dp(6)
-KEYS_Y = TOP + dp(36) + dp(88) + GAP
-PANEL_Y = KEYS_Y + 5 * KEY + 4 * GAP + GAP
-
-MAIN = [["C", "±", "%", "÷"], ["7", "8", "9", "×"], ["4", "5", "6", "−"], ["1", "2", "3", "+"], ["⋯", "0", ",", "="]]
-PANEL = [["MS", "MR", "M+", "M−"], ["(", ")", "xʸ", "√"]]
-
-
-def tap(label):
-    for rows, y0 in ((MAIN, KEYS_Y), (PANEL, PANEL_Y)):
-        for r, row in enumerate(rows):
-            if label in row:
-                c = row.index(label)
-                x = fx + PAD + c * (KEY + GAP) + KEY // 2
-                y = y0 + r * (KEY + GAP) + KEY // 2
-                sh(f"adb shell input tap {x} {y}")
-                time.sleep(0.8)
-                return
-    sys.exit(f"unknown key {label}")
-
-
-for k in ["1", "2", "+", "3", "×", "4"]:
-    tap(k)
-shot("2-typing")
-
-tap("⋯")
-time.sleep(1.5)
-shot("3-panel")
-
-for k in ["−", "√", "(", "1", "6", ")"]:
-    tap(k)
-time.sleep(2)
-shot("4-panel-typing")
-
-tap("=")
-tap("M+")
-time.sleep(0.5)
-shot("5-result-memory")
-
-# Opacity: tap the slider at ~30%.
-seek_l = fx + PAD + dp(24) + dp(16)
-seek_r = fx + PAD + INNER - dp(32) - dp(16)
-sh(f"adb shell input tap {int(seek_l + 0.3 * (seek_r - seek_l))} {TOP + dp(18)}")
+# Extra panel in full screen
+tap("A", "more", settle=1.5)
 time.sleep(1)
-shot("6-opacity")
+for k in ["(", "1", "+", "2", ")", "xʸ", "2"]:
+    tap("A", k)
+shot("04-full-panel")
+
+# Collapse to the floating window
+sh("adb logcat -c", check=False)
+tap("A", "mode", settle=1)
+wait_for("F", "corner")
+time.sleep(2)
+shot("05-float")
+
+# Resize by the corner: bigger, then check the layout holds
+p = positions("F")
+l, t, r, b = p["corner"]
+cx, cy = (l + r) // 2, (t + b) // 2
+sh(f"adb shell input swipe {cx} {cy} {cx + 120} {cy + 260} 900")
+time.sleep(2)
+shot("06-resized-bigger")
+
+p = positions("F")
+l, t, r, b = p["corner"]
+cx, cy = (l + r) // 2, (t + b) // 2
+sh(f"adb shell input swipe {cx} {cy} {cx - 300} {cy - 420} 900")
+time.sleep(2)
+shot("07-resized-smaller")
+
+# Close the panel in the floating window, then type
+tap("F", "more", settle=1.5)
+for k in ["7", "×", "8", "="]:
+    tap("F", k)
+shot("08-float-typing")
+
+# Opacity ~30%
+l, t, r, b = positions("F")["seek"]
+sh(f"adb shell input tap {int(l + 0.3 * (r - l))} {(t + b) // 2}")
+time.sleep(1)
+shot("09-opacity")
+
+# Expand back to full screen
+sh("adb logcat -c", check=False)
+tap("F", "mode", settle=1)
+wait_for("A", "=")
+time.sleep(2)
+shot("10-back-full")
 
 with open("shots/keys.txt", "w") as f:
-    f.write(sh("adb logcat -d -s Calc:D", check=False))
+    f.write(sh("adb logcat -d -s Calc:D", check=False, quiet=True))
 crash = sh("adb logcat -d -b crash", check=False)
 if crash.strip():
     with open("shots/crash.txt", "w") as f:

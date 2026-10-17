@@ -15,9 +15,7 @@ import android.os.IBinder
 import android.provider.Settings
 import android.view.ContextThemeWrapper
 import android.view.Gravity
-import android.view.View
 import android.view.WindowManager
-import java.math.BigDecimal
 
 /** Foreground service that owns the floating calculator window. */
 class OverlayService : Service(), CalcPanel.Host {
@@ -25,15 +23,24 @@ class OverlayService : Service(), CalcPanel.Host {
     private lateinit var wm: WindowManager
     private lateinit var params: WindowManager.LayoutParams
     private var panel: CalcPanel? = null
-    private val engine = Engine()
-    private val prefs by lazy { getSharedPreferences("calc", MODE_PRIVATE) }
-    private var dragStartX = 0
-    private var dragStartY = 0
+    private var startX = 0
+    private var startY = 0
+    private var startW = 0
+    private var startH = 0
+
+    private val density get() = resources.displayMetrics.density
+    private fun dp(v: Float) = (v * density + 0.5f).toInt()
+    private val screenW get() = resources.displayMetrics.widthPixels
+    private val screenH get() = resources.displayMetrics.heightPixels
+
+    /** Height of the window with the extra panel closed; the panel adds two rows on top of it. */
+    private var baseH = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        CalcState.init(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         startInForeground()
     }
@@ -43,99 +50,127 @@ class OverlayService : Service(), CalcPanel.Host {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (panel == null) show() else clampToScreen()
+        if (panel == null) show() else clamp()
         return START_NOT_STICKY
     }
 
+    private fun panelRowsHeight(width: Int): Int {
+        // Two rows of cells; a cell is a quarter of the grid width (see CalcPanel geometry).
+        val cell = (width - 2 * dp(10f)) / 4
+        return 2 * cell
+    }
+
     private fun show() {
-        prefs.getString(KEY_MEMORY, null)?.let { s -> runCatching { engine.memory = BigDecimal(s) } }
-        val alphaPct = prefs.getInt(KEY_ALPHA, 100).coerceIn(CalcPanel.MIN_ALPHA, 100)
-        val open = prefs.getBoolean(KEY_PANEL, false)
-        val view = CalcPanel(ContextThemeWrapper(this, android.R.style.Theme_Material), engine, alphaPct, open, this)
+        val view = CalcPanel(ContextThemeWrapper(this, android.R.style.Theme_Material), floating = true, host = this)
+
+        val w = CalcState.getInt(KEY_W, dp(264f)).coerceIn(minW(), screenW)
+        baseH = CalcState.getInt(KEY_BASE_H, dp(440f)).coerceIn(minBaseH(), screenH)
+        val h = (baseH + if (view.panelOpen) panelRowsHeight(w) else 0).coerceAtMost(screenH)
 
         params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            w, h,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            alpha = alphaPct / 100f
+            alpha = CalcState.alphaPct.coerceIn(CalcPanel.MIN_ALPHA, 100) / 100f
+            x = CalcState.getInt(KEY_X, screenW - w - dp(16f))
+            y = CalcState.getInt(KEY_Y, screenH / 6)
         }
-
-        val savedX = prefs.getInt(KEY_X, Int.MIN_VALUE)
-        val savedY = prefs.getInt(KEY_Y, Int.MIN_VALUE)
-        if (savedX == Int.MIN_VALUE || savedY == Int.MIN_VALUE) {
-            view.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-            val dm = resources.displayMetrics
-            params.x = dm.widthPixels - view.measuredWidth - (16 * dm.density).toInt()
-            params.y = dm.heightPixels / 5
-        } else {
-            params.x = savedX
-            params.y = savedY
-        }
-
+        clampPosition()
         wm.addView(view, params)
         panel = view
-        view.post { clampToScreen() }
     }
 
-    private fun clampToScreen(extraHeight: Int = 0) {
+    private fun minW() = dp(180f)
+    private fun minBaseH() = dp(280f)
+
+    private fun clampPosition() {
+        params.width = params.width.coerceIn(minW(), screenW)
+        params.height = params.height.coerceAtMost(screenH)
+        params.x = params.x.coerceIn(0, maxOf(0, screenW - params.width))
+        params.y = params.y.coerceIn(0, maxOf(0, screenH - params.height))
+    }
+
+    private fun clamp() {
         val v = panel ?: return
-        val dm = resources.displayMetrics
-        val w = if (v.width > 0) v.width else v.measuredWidth
-        val h = (if (v.height > 0) v.height else v.measuredHeight) + extraHeight
-        params.x = params.x.coerceIn(0, maxOf(0, dm.widthPixels - w))
-        params.y = params.y.coerceIn(0, maxOf(0, dm.heightPixels - h))
+        clampPosition()
         wm.updateViewLayout(v, params)
+    }
+
+    private fun savePlacement() {
+        CalcState.putInts(KEY_X to params.x, KEY_Y to params.y, KEY_W to params.width, KEY_BASE_H to baseH)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        panel?.post { clampToScreen() }
+        panel?.post { clamp() }
     }
 
     // ---------- CalcPanel.Host ----------
 
     override fun onDrag(dx: Int, dy: Int, phase: Int) {
         val v = panel ?: return
-        if (phase == 0) {
-            dragStartX = params.x
-            dragStartY = params.y
-            return
-        }
-        val dm = resources.displayMetrics
-        params.x = (dragStartX + dx).coerceIn(0, maxOf(0, dm.widthPixels - v.width))
-        params.y = (dragStartY + dy).coerceIn(0, maxOf(0, dm.heightPixels - v.height))
+        if (phase == 0) { startX = params.x; startY = params.y; return }
+        params.x = (startX + dx).coerceIn(0, maxOf(0, screenW - params.width))
+        params.y = (startY + dy).coerceIn(0, maxOf(0, screenH - params.height))
         wm.updateViewLayout(v, params)
-        if (phase == 2) prefs.edit().putInt(KEY_X, params.x).putInt(KEY_Y, params.y).apply()
+        if (phase == 2) savePlacement()
+    }
+
+    override fun onResize(dx: Int, dy: Int, phase: Int) {
+        val v = panel ?: return
+        if (phase == 0) { startW = params.width; startH = params.height; return }
+        val extra = params.height - baseH
+        params.width = (startW + dx).coerceIn(minW(), screenW - params.x)
+        params.height = (startH + dy).coerceIn(minBaseH() + extra, screenH - params.y)
+        baseH = params.height - extra
+        wm.updateViewLayout(v, params)
+        if (phase == 2) {
+            // After the new layout, re-derive the panel rows for the new size so toggling stays exact.
+            v.post {
+                if (v.panelOpen) baseH = params.height - 2 * v.cell
+                savePlacement()
+            }
+        }
+    }
+
+    override fun onPanelToggled(open: Boolean, deltaPx: Int) {
+        val v = panel ?: return
+        val newH = (baseH + if (open) deltaPx else 0).coerceAtMost(screenH)
+        // Grow upwards, so the keypad stays exactly where it was under the finger.
+        params.y -= newH - params.height
+        params.height = newH
+        params.y = params.y.coerceIn(0, maxOf(0, screenH - params.height))
+        wm.updateViewLayout(v, params)
+        savePlacement()
     }
 
     override fun onAlphaChanged(pct: Int) {
         val v = panel ?: return
         params.alpha = pct / 100f
         wm.updateViewLayout(v, params)
-        prefs.edit().putInt(KEY_ALPHA, pct).apply()
+        CalcState.alphaPct = pct
+        CalcState.save()
     }
 
-    override fun onPanelToggled(open: Boolean, extraHeightPx: Int) {
-        prefs.edit().putBoolean(KEY_PANEL, open).apply()
-        if (open) clampToScreen(extraHeightPx)
+    override fun onModeToggle() {
+        CalcState.save()
+        savePlacement()
+        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        stopSelf()
     }
 
-    override fun onClose() = stopSelf()
-
-    override fun onMemoryChanged() {
-        val m = engine.memory
-        prefs.edit().apply {
-            if (m == null) remove(KEY_MEMORY) else putString(KEY_MEMORY, m.toPlainString())
-        }.apply()
+    override fun onClose() {
+        savePlacement()
+        stopSelf()
     }
 
     override fun onDestroy() {
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
+        CalcState.save()
         super.onDestroy()
     }
 
@@ -170,10 +205,9 @@ class OverlayService : Service(), CalcPanel.Host {
         const val ACTION_STOP = "io.github.krasn0w.calc.STOP"
         private const val CHANNEL = "overlay"
         private const val NOTIF_ID = 1
-        private const val KEY_ALPHA = "alpha"
         private const val KEY_X = "x"
         private const val KEY_Y = "y"
-        private const val KEY_PANEL = "panelOpen"
-        private const val KEY_MEMORY = "memory"
+        private const val KEY_W = "w"
+        private const val KEY_BASE_H = "baseH"
     }
 }

@@ -196,15 +196,23 @@ class Engine {
         lastExpression = ""
     }
 
-    /** Commit the expression. Returns true on success. */
+    /** Last top-level operation, repeated by pressing "=" again (2 + 3 = = = → 5, 8, 11). */
+    private var repeatOp: Char? = null
+    private var repeatOperand: List<Tok> = emptyList()
+
+    /**
+     * "=". Commits the expression; pressed again right after a result,
+     * repeats the last operation with the same operand. Returns true on success.
+     */
     fun equals(): Boolean {
-        if (justEvaluated) return true
+        if (justEvaluated) return repeatLast()
         val trimmed = trimmedTokens()
         if (trimmed.isEmpty()) return false
         return try {
             val v = evaluate(trimmed)
             val closed = trimmed + List(openParens(trimmed)) { Tok.RParen }
             lastExpression = render(closed)
+            rememberRepeat(closed)
             tokens.clear()
             tokens += Tok.Num(exact = v)
             justEvaluated = true
@@ -219,10 +227,52 @@ class Engine {
         }
     }
 
+    private fun repeatLast(): Boolean {
+        val op = repeatOp ?: return true
+        val base = (tokens.singleOrNull() as? Tok.Num)?.exact ?: return true
+        val list = listOf<Tok>(Tok.Num(exact = base), Tok.Op(op)) + repeatOperand
+        return try {
+            val v = evaluate(list)
+            lastExpression = render(list)
+            tokens.clear()
+            tokens += Tok.Num(exact = v)
+            errorMessage = null
+            true
+        } catch (e: CalcError) {
+            errorMessage = e.message
+            false
+        } catch (e: ArithmeticException) {
+            errorMessage = "Ошибка"
+            false
+        }
+    }
+
+    /** Find the operation to repeat: the rightmost top-level operator of the lowest precedence. */
+    private fun rememberRepeat(closed: List<Tok>) {
+        fun prec(c: Char) = when (c) { '+', '-' -> 1; '*', '/' -> 2; else -> 3 }
+        var depth = 0
+        var best = -1
+        closed.forEachIndexed { i, t ->
+            when (t) {
+                Tok.LParen -> depth++
+                Tok.RParen -> depth--
+                is Tok.Op -> if (depth == 0) {
+                    val b = closed.getOrNull(best) as? Tok.Op
+                    if (b == null || prec(t.c) <= prec(b.c)) best = i
+                }
+                else -> Unit
+            }
+        }
+        if (best < 0) { repeatOp = null; repeatOperand = emptyList(); return }
+        repeatOp = (closed[best] as Tok.Op).c
+        repeatOperand = closed.subList(best + 1, closed.size).toList()
+    }
+
     // ---------- memory ----------
 
+    /** Value for memory keys: the shown result, or the expression committed first (never a repeat). */
     private fun committedValue(): BigDecimal? {
-        if (!equals()) return null
+        if (!justEvaluated && !equals()) return null
         return (tokens.singleOrNull() as? Tok.Num)?.exact
     }
 

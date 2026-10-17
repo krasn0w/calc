@@ -107,6 +107,25 @@ object EngineChecks {
         r("7S c 2+R*2=", "16")
         r("4S c 1+2=R", "4")       // MR after = replaces the result
         r("4S c 1+2=RZ c R", "0")  // Z clears memory, then R does nothing
+        // repeated "=" repeats the last operation
+        r("2+3===", "11")
+        r("2*3==", "18")
+        r("10-2==", "6")
+        r("9/3==", "1")
+        r("2^3==", "512")
+        r("2+3*4==", "26")          // lowest-precedence top-level op: + (3×4)
+        r("2*3+4==", "14")          // + 4 again
+        r("(2+3)==", "5")           // nothing to repeat
+        r("5==", "5")
+        r("200+10%==", "242")       // +10% again (compounding)
+        r("2+3==n=", "-5")          // repeat after sign toggle: −8 + 3
+        r("2+3=P=", "8")            // M+ does not repeat; "=" afterwards does
+        r("2+3=P c R", "5")
+        r("2+3==4+1=", "5")         // typing after results starts fresh
+        // percent: x + p% = x + x·p/100, same as standard calculators
+        r("30n+50%=", "-45")
+        r("30n*50%=", "-15")
+        r("30n-50%=", "-15")
         // large / small numbers
         r("10^20=", "1×10²⁰")
         r("2^-30=", "9,31322574615×10⁻¹⁰")
@@ -131,6 +150,8 @@ object EngineChecks {
 
         // last expression shown after '='
         run { val e = press("2+3*(4"); e.equals(); check(clean(e.lastExpression) == "2 + 3 × (4)") { e.lastExpression }; n++ }
+        run { val e = press("2+3=="); check(clean(e.lastExpression) == "5 + 3") { e.lastExpression }; n++ }
+        run { val e = press("10-4=n="); check(clean(e.lastExpression) == "-6 - 4") { e.lastExpression }; n++ }
         return n
     }
 }

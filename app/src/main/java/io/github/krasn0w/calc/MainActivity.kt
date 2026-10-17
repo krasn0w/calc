@@ -3,75 +3,84 @@ package io.github.krasn0w.calc
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.util.TypedValue
-import android.view.Gravity
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.view.View
+import android.view.WindowInsets
+import android.widget.Toast
 
-/** Launcher: starts the floating window, or asks for the overlay permission first. */
-class MainActivity : Activity() {
+/** The calculator as a normal full-screen app. "Collapse" turns it into the floating window. */
+class MainActivity : Activity(), CalcPanel.Host {
+
+    private lateinit var panel: CalcPanel
+    private var wantFloat = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Settings.canDrawOverlays(this)) {
-            launch()
-            return
+        CalcState.init(this)
+        // Only one calculator on screen: opening the app closes the floating window.
+        stopService(Intent(this, OverlayService::class.java))
+
+        edgeToEdge()
+        panel = CalcPanel(this, floating = false, host = this)
+        panel.setOnApplyWindowInsetsListener { v, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val s = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                v.setPadding(s.left, s.top, s.right, s.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                v.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
         }
-        setContentView(permissionView())
+        setContentView(panel)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun edgeToEdge() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+        } else {
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        }
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
     }
 
     override fun onResume() {
         super.onResume()
-        if (!isFinishing && Settings.canDrawOverlays(this)) launch()
+        if (wantFloat && Settings.canDrawOverlays(this)) {
+            wantFloat = false
+            goFloat()
+            return
+        }
+        panel.refresh()
     }
 
-    private fun launch() {
+    override fun onPause() {
+        super.onPause()
+        CalcState.save()
+    }
+
+    override fun onModeToggle() {
+        if (Settings.canDrawOverlays(this)) {
+            goFloat()
+        } else {
+            wantFloat = true
+            Toast.makeText(this, "Разрешите Calc «Поверх других приложений»", Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+        }
+    }
+
+    private fun goFloat() {
+        CalcState.save()
         startForegroundService(Intent(this, OverlayService::class.java))
         finish()
     }
 
-    private fun permissionView(): LinearLayout {
-        val d = resources.displayMetrics.density
-        fun dp(v: Int) = (v * d).toInt()
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(0xFF161618.toInt())
-            setPadding(dp(28), dp(28), dp(28), dp(28))
-            addView(TextView(context).apply {
-                text = "Нужно одно разрешение"
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            })
-            addView(TextView(context).apply {
-                text = "Чтобы калькулятор висел поверх других приложений, включите для Calc " +
-                    "«Поверх других приложений», затем вернитесь сюда."
-                setTextColor(0xFFB0B0B5.toInt())
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setLineSpacing(0f, 1.25f)
-            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-            addView(TextView(context).apply {
-                text = "Открыть настройки"
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                gravity = Gravity.CENTER
-                background = GradientDrawable().apply {
-                    setColor(0xFFFF9500.toInt())
-                    cornerRadius = dp(28).toFloat()
-                }
-                setOnClickListener {
-                    startActivity(
-                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                    )
-                }
-            }, LinearLayout.LayoutParams(-1, dp(56)).apply { topMargin = dp(28) })
-        }
-    }
+    override fun onClose() = finish()
 }
