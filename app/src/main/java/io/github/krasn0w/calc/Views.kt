@@ -68,7 +68,8 @@ class KeyView(context: Context, val keyId: String, label: String, val kind: Kind
 
         when (icon) {
             Icon.NONE -> {
-                text.textSize = size * kind.textScale
+                // A comma is a tiny glyph; give it the optical weight of a digit.
+                text.textSize = size * kind.textScale * (if (label == ",") 1.5f else 1f)
                 text.getTextBounds(label, 0, label.length, bounds)
                 c.drawText(label, cx - bounds.exactCenterX(), cy - bounds.exactCenterY(), text)
             }

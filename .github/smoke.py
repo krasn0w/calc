@@ -54,8 +54,8 @@ def wait_for(mode, key, timeout=30):
     sys.exit(f"no layout for {mode}/{key}")
 
 
-def tap(mode, key, settle=0.8):
-    p = positions(mode)
+def tap(mode, key, settle=0.8, known=None):
+    p = known if known is not None else positions(mode)
     if key not in p:
         sys.exit(f"unknown key {mode}/{key}; have {sorted(p)}")
     l, t, r, b = p[key]
@@ -91,8 +91,9 @@ for k in ["(", "1", "+", "2", ")", "xʸ", "2"]:
 shot("04-full-panel")
 
 # Collapse to the floating window
+pa = positions("A")
 sh("adb logcat -c", check=False)
-tap("A", "mode", settle=1)
+tap("A", "mode", settle=1, known=pa)
 wait_for("F", "corner")
 time.sleep(2)
 shot("05-float")
@@ -125,8 +126,9 @@ time.sleep(1)
 shot("09-opacity")
 
 # Expand back to full screen
+pf = positions("F")
 sh("adb logcat -c", check=False)
-tap("F", "mode", settle=1)
+tap("F", "mode", settle=1, known=pf)
 wait_for("A", "=")
 time.sleep(2)
 shot("10-back-full")
