@@ -81,3 +81,11 @@ jobs:
         with:
           name: smoke-shots
           path: shots/
+
+      - name: Attach screenshots to the release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd shots && for f in *; do mv "$f" "smoke-$f"; done
+          gh release upload latest smoke-* --repo "$GITHUB_REPOSITORY" --clobber
