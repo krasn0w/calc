@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -204,6 +205,7 @@ class CalcPanel(
             background = RippleDrawable(ColorStateList.valueOf(kind.ripple), oval, mask)
             isHapticFeedbackEnabled = true
             setOnClickListener {
+                Log.d("Calc", "key $label")
                 it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 val memBefore = engine.memory
                 onTap()
@@ -269,13 +271,7 @@ class CalcPanel(
 
     private fun styleMoreKey() {
         val bg = (moreKey.background as RippleDrawable).getDrawable(0) as GradientDrawable
-        if (panelOpen) {
-            bg.setColor(0xFF7A7A82.toInt())
-            moreKey.text = "⌄"
-        } else {
-            bg.setColor(Kind.SERVICE.bg)
-            moreKey.text = "⋯"
-        }
+        bg.setColor(if (panelOpen) 0xFF7A7A82.toInt() else Kind.SERVICE.bg)
     }
 
     fun refresh() {

@@ -36,7 +36,11 @@ sh("adb logcat -c", check=False)
 sh("adb shell input keyevent KEYCODE_HOME")
 time.sleep(2)
 sh(f"adb shell am start -n {PKG}/.MainActivity")
-time.sleep(5)
+for _ in range(30):
+    if "APPLICATION_OVERLAY" in sh("adb shell dumpsys window windows | grep -A6 'u0 " + PKG + "' || true", check=False):
+        break
+    time.sleep(1)
+time.sleep(2)
 shot("1-launch")
 
 # Density and the overlay window's frame.
@@ -85,7 +89,7 @@ def tap(label):
                 x = fx + PAD + c * (KEY + GAP) + KEY // 2
                 y = y0 + r * (KEY + GAP) + KEY // 2
                 sh(f"adb shell input tap {x} {y}")
-                time.sleep(0.4)
+                time.sleep(0.8)
                 return
     sys.exit(f"unknown key {label}")
 
@@ -100,6 +104,7 @@ shot("3-panel")
 
 for k in ["−", "√", "(", "1", "6", ")"]:
     tap(k)
+time.sleep(2)
 shot("4-panel-typing")
 
 tap("=")
@@ -114,9 +119,12 @@ sh(f"adb shell input tap {int(seek_l + 0.3 * (seek_r - seek_l))} {TOP + dp(18)}"
 time.sleep(1)
 shot("6-opacity")
 
+with open("shots/keys.txt", "w") as f:
+    f.write(sh("adb logcat -d -s Calc:D", check=False))
 crash = sh("adb logcat -d -b crash", check=False)
-with open("shots/crash.txt", "w") as f:
-    f.write(crash)
+if crash.strip():
+    with open("shots/crash.txt", "w") as f:
+        f.write(crash)
 if PKG in crash:
     sys.exit("app crashed, see shots/crash.txt")
 print("smoke OK", flush=True)

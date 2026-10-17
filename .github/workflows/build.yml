@@ -87,5 +87,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cd shots && for f in *; do mv "$f" "smoke-$f"; done
+          cd shots && find . -type f -empty -delete
+          for f in *; do mv "$f" "smoke-$f"; done
           gh release upload latest smoke-* --repo "$GITHUB_REPOSITORY" --clobber
