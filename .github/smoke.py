@@ -64,6 +64,10 @@ def tap(mode, key, settle=0.8, known=None):
 
 
 apk = glob.glob("calc*.apk")[0]
+# CI emulators often throw a "System UI isn't responding" dialog right after boot: let the
+# system settle and keep error dialogs from stealing taps.
+sh("adb shell settings put global hide_error_dialogs 1", check=False)
+time.sleep(25)
 sh(f"adb install -r {apk}")
 sh(f"adb shell appops set {PKG} SYSTEM_ALERT_WINDOW allow")
 sh("adb logcat -c", check=False)
@@ -82,6 +86,8 @@ tap("A", "clear")
 for k in ["2", "+", "3", "=", "=", "="]:
     tap("A", k)
 shot("03-repeat")
+with open("shots/cpu-after-repeat.txt", "w") as f:
+    f.write(sh("adb shell dumpsys cpuinfo | head -25", check=False, quiet=True))
 
 # Extra panel in full screen
 tap("A", "more", settle=1.5)
@@ -121,6 +127,8 @@ time.sleep(0.8)
 for k in ["7", "×", "8", "="]:
     tap("F", k)
 shot("08-float-typing")
+with open("shots/cpu-float.txt", "w") as f:
+    f.write(sh("adb shell dumpsys cpuinfo | head -25", check=False, quiet=True))
 # "=" sits next to the resize zone: it must still compute, not resize
 for k in ["="]:
     tap("F", k)
